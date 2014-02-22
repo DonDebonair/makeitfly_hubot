@@ -26,6 +26,24 @@ defaultOptions = () ->
     headers:
       "Authorization": "Basic #{auth}"
 
+buildsStatus = (builds) ->
+  buildsLength = builds.length
+  response = ""
+
+  if buildsLength > 0
+    builds.forEach (build) ->
+      response += buildStatusMessage(build)
+      response += "\n" if buildsLength > 1
+
+  response
+
+buildStatusMessage = (build) ->
+  response = ""
+  response += "Build ##{build.number} (#{build.sha1}) of #{build.repo}/#{build.branch} #{build.status}"
+  response += "(#{build.duration}s) #{build.compare}"
+  response += " [Log: #{build.web_url}]"
+
+
 get = (path, params, cb) ->
   options = defaultOptions()
   options.path += path
@@ -71,7 +89,7 @@ module.exports = (robot) ->
       if statusCode == 200
         msg.send body
       else
-        msg.reply "can't help you right now."
+        msg.reply "Unable to fetch help. Got HTTP status #{statusCode}"
 
   robot.respond /ci build ([-_\.0-9a-zA-Z]+)(\/([-_\+\.a-zA-z0-9\/]+))?/i, (msg) ->
     app     = msg.match[1]
@@ -84,7 +102,7 @@ module.exports = (robot) ->
         response = body
       else
         console.log body
-        response = "Can't go HAM on #{app}/#{branch}, shit's being weird."
+        response = "Can't go HAM on #{app}/#{branch}, shit's being weird. Got HTTP status #{statusCode}"
 
       msg.send response
 
@@ -100,7 +118,7 @@ module.exports = (robot) ->
       if statusCode == 201
         msg.reply body
       else
-        msg.reply "Error F7U12: Can't Setup."
+        msg.reply "Can't Setup. Make sure I have access to it. Expected HTTP status 201, got #{statusCode}"
 
   robot.respond /ci toggle ([-_\.0-9a-zA-Z]+)/i, (msg) ->
     app    = msg.match[1]
@@ -109,7 +127,7 @@ module.exports = (robot) ->
       if statusCode == 200
         msg.send body
       else
-        msg.reply "failed to flip the flag.  Sorry."
+        msg.reply "Failed to flip the flag. Sorry. Got HTTP status #{statusCode}"
 
   robot.respond /ci set room ([-_0-9a-zA-Z\.]+) (.*)$/i, (msg) ->
     repo = msg.match[1]
@@ -118,7 +136,7 @@ module.exports = (robot) ->
       if [404, 403, 200].indexOf(statusCode) > -1
         msg.send body
       else
-        msg.send "you broke everything"
+        msg.send "I couldn't update the room. Got HTTP status #{statusCode}"
 
   robot.respond /ci rooms$/i, (msg) ->
     get "rooms", { }, (err, statusCode, body) ->
@@ -128,12 +146,22 @@ module.exports = (robot) ->
       else
         msg.reply "can't predict rooms now."
 
-  robot.respond /ci status$/i, (msg) ->
-    get "", {}, (err, statusCode, body) ->
+  robot.respond /ci builds ([0-9]+) ?(building)?$/i, (msg) ->
+    limit = msg.match[1]
+    building = msg.match[2]?
+    get "builds?limit=#{limit}&building=#{building}", {}, (err, statusCode, body) ->
+      builds = JSON.parse(body)
+      response = buildsStatus(builds) || "Builds? Sorry, there's no builds here"
+
+      msg.send response
+
+  robot.respond /ci status( (\*\/[-_\+\.a-zA-z0-9\/]+))?$/i, (msg) ->
+    path = if msg.match[2] then "/#{msg.match[2]}" else ""
+    get path, {}, (err, statusCode, body) ->
       if statusCode == 200
         msg.send(body)
       else
-        msg.send("who knows")
+        msg.send("Couldn't get status. Got HTTP status #{statusCode}")
 
   robot.respond /ci status (-v )?([-_\.0-9a-zA-Z]+)(\/([-_\+\.a-zA-z0-9\/]+))?/i, (msg) ->
     app    = msg.match[2]
@@ -144,13 +172,8 @@ module.exports = (robot) ->
       count = 1
 
     get "#{app}/#{branch}?limit=#{count}", { }, (err, statusCode, body) ->
-      response = ""
       builds = JSON.parse(body)
-
-      builds.forEach (build) ->
-        response += "Build ##{build.number} (#{build.sha1}) of #{build.repo}/#{build.branch} #{build.status}"
-        response += "(#{build.duration}s) #{build.compare}"
-        response += "\n" if count > 1
+      response = buildsStatus(builds) || "Sorry, no builds found for #{app}/#{branch}"
 
       msg.send response
 
